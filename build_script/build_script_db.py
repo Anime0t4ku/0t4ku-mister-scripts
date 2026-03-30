@@ -53,7 +53,9 @@ def build_db(source_dir: str, output_zip: str):
         "default_options": {},
         "files": files,
         "folders": {
-            "Scripts": {}
+            "Scripts": {
+                "tags": ["scripts"]
+            }
         },
         "timestamp": int(time.time()),
         "zips": {}
