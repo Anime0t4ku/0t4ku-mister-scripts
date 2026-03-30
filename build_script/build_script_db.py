@@ -4,6 +4,7 @@ import sys
 import time
 import zipfile
 import hashlib
+import re
 from pathlib import Path
 
 
@@ -31,15 +32,12 @@ def build_db(source_dir: str, output_zip: str):
 
         rel_path = file_path.relative_to(source).as_posix()
 
-        # Install destination on MiSTer
         mister_path = f"Scripts/{rel_path}"
 
-        # Raw GitHub URL to the file in main
         raw_url = f"{REPO_RAW_BASE}/{source.name}/{rel_path}"
 
-        tags = ["script", "mister"]
-        if file_path.suffix == ".sh":
-            tags.append("shell")
+        script_name = re.sub(r"[^a-z0-9]", "", file_path.stem.lower())
+        tags = ["scripts", script_name]
 
         files[mister_path] = {
             "hash": md5_file(file_path),
