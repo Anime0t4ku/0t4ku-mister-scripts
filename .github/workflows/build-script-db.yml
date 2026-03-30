@@ -1,0 +1,68 @@
+name: Build script DB
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Scripts/**'
+      - 'build_script/build_script_db.py'
+      - '.github/workflows/build-script-db.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-db:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build script DB zip file
+        env:
+          REPO_RAW_BASE: https://raw.githubusercontent.com/Anime0t4ku/0t4ku-mister-scripts/main
+        run: |
+          rm -rf out
+          mkdir -p out
+
+          python build_script/build_script_db.py Scripts out/scripts.json.zip
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: script-db
+          path: out/*.json.zip
+
+      - name: Publish DB files to db branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          TEMP_DIR="$(mktemp -d)"
+          cp out/*.json.zip "$TEMP_DIR/"
+
+          git fetch origin
+
+          if git ls-remote --exit-code --heads origin db; then
+            git switch --create db-publish --track origin/db
+          else
+            git switch --orphan db-publish
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          mkdir -p db
+          find db -type f -name "*.json.zip" -delete
+
+          cp "$TEMP_DIR"/*.json.zip db/
+
+          git add db
+          git commit -m "Update script DB files" || exit 0
+          git push origin HEAD:db --force
