@@ -2,7 +2,7 @@
 
 APP_NAME="ftp_save_sync"
 APP_TITLE="ftp_save_sync by Anime0t4ku"
-VERSION="0.2.0"
+VERSION="0.3.0"
 
 SCRIPT_PATH="/media/fat/Scripts/ftp_save_sync.sh"
 BASE_DIR="/media/fat/Scripts/.config/$APP_NAME"
@@ -436,6 +436,7 @@ bool_is_true() {
 
 log() {
     mkdir -p "$BASE_DIR"
+    [ -f "$LOG_FILE" ] || : > "$LOG_FILE"
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
 
@@ -490,12 +491,11 @@ cleanup() {
             rm -f "$PID_FILE"
         fi
     fi
-    rm -f "$SYNC_ERROR_LOG"
+    rm -f "$SYNC_ERROR_LOG" "$RCLONE_CONFIG_TMP"
 }
 
 cleanup_and_exit() {
     cleanup
-    rm -f "$RCLONE_CONFIG_TMP"
     exit 0
 }
 
@@ -742,6 +742,11 @@ sync_folder() {
 }
 
 run_sync_pass() {
+    if ! load_config; then
+        log "Config missing during sync pass."
+        return 1
+    fi
+
     if ! build_rclone_config; then
         log "Failed to rebuild rclone config for sync pass."
         return 1
@@ -772,12 +777,13 @@ main() {
             if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
                 exit 0
             fi
+            rm -f "$PID_FILE"
         fi
 
         echo $$ > "$PID_FILE"
     fi
 
-    trap 'cleanup_and_exit' INT TERM
+    trap 'cleanup_and_exit' INT TERM EXIT
 
     if ! load_config; then
         log "Config missing, daemon exiting."
@@ -800,13 +806,14 @@ main() {
     fi
 
     if ! test_connection; then
-        log "Connection test failed, daemon exiting."
-        exit 1
+        log "Initial connection test failed, daemon will keep retrying."
     fi
 
     if [ "$one_shot" = "true" ]; then
-        if is_sync_allowed; then
+        if test_connection && is_sync_allowed; then
             run_sync_pass
+        else
+            log "Manual sync skipped, connection unavailable or sync not allowed."
         fi
         rm -f "$RCLONE_CONFIG_TMP" "$SYNC_ERROR_LOG"
         exit 0
@@ -816,11 +823,18 @@ main() {
 
     while true; do
         if is_sync_allowed; then
-            if [ "$LAST_RUN_STATE" != "allowed" ]; then
-                log "Sync resumed."
-                LAST_RUN_STATE="allowed"
+            if test_connection; then
+                if [ "$LAST_RUN_STATE" != "allowed" ]; then
+                    log "Sync resumed."
+                    LAST_RUN_STATE="allowed"
+                fi
+                run_sync_pass
+            else
+                if [ "$LAST_RUN_STATE" != "waiting_for_connection" ]; then
+                    log "Connection unavailable, waiting to retry."
+                    LAST_RUN_STATE="waiting_for_connection"
+                fi
             fi
-            run_sync_pass
         else
             if [ "$LAST_RUN_STATE" != "paused:$CURRENT_CORE_NAME" ]; then
                 log "Sync paused, active core detected: $CURRENT_CORE_NAME"
@@ -1098,7 +1112,10 @@ enable_autostart() {
     {
         echo ""
         echo "# ftp_save_sync START"
-        echo "$DAEMON_SCRIPT >/dev/null 2>&1 &"
+        echo "("
+        echo "    sleep 15"
+        echo "    $DAEMON_SCRIPT >/dev/null 2>&1"
+        echo ") &"
         echo "# ftp_save_sync END"
     } >> "$STARTUP_FILE"
 
