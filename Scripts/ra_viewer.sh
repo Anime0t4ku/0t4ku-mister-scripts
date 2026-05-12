@@ -41,7 +41,7 @@ from pathlib import Path
 TITLE = "RetroAchievements Viewer for MiSTer by Anime0t4ku"
 API_BASE = "https://retroachievements.org/API"
 RA_MEDIA_BASE = "https://media.retroachievements.org"
-USER_AGENT = "MiSTer RA Viewer by Anime0t4ku/1.3"
+USER_AGENT = "MiSTer RA Viewer by Anime0t4ku/1.4"
 
 BASE = Path("/media/fat/Scripts/.config/ra_viewer")
 CONFIG = BASE / "config.ini"
@@ -176,11 +176,13 @@ def normalize_achievements(game_data):
         rows = achievements
     else:
         rows = []
+
     def order_key(a):
         try:
             return int(a.get("DisplayOrder", 999999))
         except Exception:
             return 999999
+
     return sorted(rows, key=order_key)
 
 
@@ -213,6 +215,133 @@ def achievement_mark(achievement):
     if softcore:
         return "[S]"
     return "[ ]"
+
+
+def detect_framebuffer_size():
+    paths = [
+        Path("/sys/class/graphics/fb0/virtual_size"),
+        Path("/sys/class/graphics/fb0/modes"),
+    ]
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace").strip()
+        except Exception:
+            continue
+        match = re.search(r"(\d{3,5})\s*[,x]\s*(\d{3,5})", text)
+        if match:
+            width = int(match.group(1))
+            height = int(match.group(2))
+            if width >= 320 and height >= 240:
+                return width, height
+    try:
+        output = subprocess.check_output(["fbset", "-s"], stderr=subprocess.DEVNULL, timeout=2).decode("utf-8", errors="replace")
+        match = re.search(r'geometry\s+(\d{3,5})\s+(\d{3,5})', output)
+        if match:
+            width = int(match.group(1))
+            height = int(match.group(2))
+            if width >= 320 and height >= 240:
+                return width, height
+    except Exception:
+        pass
+    return None, None
+
+
+def clamp(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
+
+
+def build_card_layout():
+    fb_width, fb_height = detect_framebuffer_size()
+    if not fb_width or not fb_height:
+        fb_width, fb_height = 1280, 720
+
+    ratio = fb_width / float(fb_height)
+    is_four_three = ratio < 1.55
+
+    if is_four_three:
+        if fb_width >= 1024 and fb_height >= 768:
+            width, height = 1024, 768
+        else:
+            width = clamp(fb_width, 320, 1024)
+            height = clamp(fb_height, 240, 768)
+        base_width, base_height = 1024, 768
+        scale = min(width / base_width, height / base_height)
+        compact = width <= 720 or height <= 576
+        return {
+            "name": "4:3" if not compact else "SD 4:3",
+            "width": int(width),
+            "height": int(height),
+            "scale": scale,
+            "card_rect": (32, 32, 992, 736),
+            "badge_box": (64, 88, 280, 304),
+            "badge_pos": (88, 112),
+            "badge_size": 168,
+            "text_x": 318,
+            "text_y": 70,
+            "text_right_margin": 58,
+            "divider_right_margin": 58,
+            "footer_y": 700,
+            "title_size": 48,
+            "subtitle_size": 28,
+            "small_size": 25,
+            "label_size": 28,
+            "desc_size": 31,
+            "footer_size": 23,
+            "title_lines": 2,
+            "meta_lines": 2,
+            "desc_lines": 4 if not compact else 3,
+            "line_gap": 6 if not compact else 4,
+            "card_radius": 24,
+            "badge_radius": 18,
+        }
+
+    if fb_width >= 1280 and fb_height >= 720:
+        width, height = 1280, 720
+    else:
+        width = clamp(fb_width, 426, 1280)
+        height = clamp(fb_height, 240, 720)
+    base_width, base_height = 1280, 720
+    scale = min(width / base_width, height / base_height)
+    compact = width <= 854 or height <= 480
+    return {
+        "name": "16:9" if not compact else "SD 16:9",
+        "width": int(width),
+        "height": int(height),
+        "scale": scale,
+        "card_rect": (40, 40, 1240, 680),
+        "badge_box": (72, 96, 328, 352),
+        "badge_pos": (104, 128),
+        "badge_size": 192,
+        "text_x": 370,
+        "text_y": 82,
+        "text_right_margin": 90,
+        "divider_right_margin": 100,
+        "footer_y": 635,
+        "title_size": 60,
+        "subtitle_size": 34,
+        "small_size": 30,
+        "label_size": 34,
+        "desc_size": 38,
+        "footer_size": 28,
+        "title_lines": 2,
+        "meta_lines": 2,
+        "desc_lines": 4 if not compact else 3,
+        "line_gap": 8 if not compact else 5,
+        "card_radius": 28,
+        "badge_radius": 22,
+    }
+
+
+def scale_rect(rect, scale):
+    return tuple(int(round(value * scale)) for value in rect)
+
+
+def scale_point(point, scale):
+    return tuple(int(round(value * scale)) for value in point)
+
+
+def scale_value(value, scale, minimum=1):
+    return max(minimum, int(round(value * scale)))
 
 
 def find_font(size, bold=False):
@@ -279,6 +408,7 @@ def badge_url(badge_name, unlocked=True):
 def download_file(url, dest, fallback_url=None):
     if dest.exists() and dest.stat().st_size > 0:
         return dest
+
     def attempt(fetch_url):
         req = urllib.request.Request(fetch_url, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -287,6 +417,7 @@ def download_file(url, dest, fallback_url=None):
             raise RuntimeError("Downloaded file was empty.")
         with open(dest, "wb") as f:
             f.write(data)
+
     try:
         attempt(url)
     except Exception:
@@ -310,6 +441,11 @@ def render_card(game_id, achievement_id):
     if not achievement:
         raise RuntimeError("Achievement not found.")
 
+    layout = build_card_layout()
+    width = layout["width"]
+    height = layout["height"]
+    scale = layout["scale"]
+
     unlocked = is_unlocked(achievement)
     badge_name = str(achievement.get("BadgeName", "")).strip()
     badge_image = None
@@ -321,29 +457,68 @@ def render_card(game_id, achievement_id):
         except Exception:
             badge_image = None
 
-    card_file = CARD_CACHE / f"game_{game_id}_achievement_{achievement_id}.png"
-    width = 1280
-    height = 720
+    card_file = CARD_CACHE / f"game_{game_id}_achievement_{achievement_id}_{width}x{height}.png"
     img = Image.new("RGB", (width, height), (14, 16, 20))
     draw = ImageDraw.Draw(img)
-    draw.rounded_rectangle((40, 40, 1240, 680), radius=28, fill=(28, 31, 38), outline=(75, 80, 92), width=3)
-    draw.rounded_rectangle((72, 96, 328, 352), radius=22, fill=(10, 12, 16), outline=(80, 86, 100), width=2)
-    if badge_image:
-        badge_image = badge_image.resize((192, 192), Image.Resampling.LANCZOS)
-        img.paste(badge_image, (104, 128), badge_image)
-    else:
-        no_font = find_font(34, bold=True)
-        draw.text((118, 210), "NO BADGE", font=no_font, fill=(220, 220, 220))
 
-    title_font = find_font(60, bold=True)
-    subtitle_font = find_font(34)
-    small_font = find_font(30)
-    label_font = find_font(34, bold=True)
-    desc_font = find_font(38)
-    footer_font = find_font(28)
-    x = 370
-    y = 82
-    y = draw_wrapped(draw, achievement.get("Title", "Achievement"), title_font, x, y, 820, (245, 245, 245), line_gap=8, max_lines=2)
+    card_rect = scale_rect(layout["card_rect"], scale)
+    badge_box = scale_rect(layout["badge_box"], scale)
+    badge_pos = scale_point(layout["badge_pos"], scale)
+    badge_size = scale_value(layout["badge_size"], scale, 48)
+    card_radius = scale_value(layout["card_radius"], scale, 8)
+    badge_radius = scale_value(layout["badge_radius"], scale, 6)
+
+    card_rect = (
+        max(4, card_rect[0]),
+        max(4, card_rect[1]),
+        min(width - 4, card_rect[2]),
+        min(height - 4, card_rect[3]),
+    )
+    badge_box = (
+        max(8, badge_box[0]),
+        max(8, badge_box[1]),
+        min(width - 8, badge_box[2]),
+        min(height - 8, badge_box[3]),
+    )
+
+    draw.rounded_rectangle(card_rect, radius=card_radius, fill=(28, 31, 38), outline=(75, 80, 92), width=scale_value(3, scale, 1))
+    draw.rounded_rectangle(badge_box, radius=badge_radius, fill=(10, 12, 16), outline=(80, 86, 100), width=scale_value(2, scale, 1))
+
+    if badge_image:
+        badge_image = badge_image.resize((badge_size, badge_size), Image.Resampling.LANCZOS)
+        img.paste(badge_image, badge_pos, badge_image)
+    else:
+        no_font = find_font(scale_value(34, scale, 12), bold=True)
+        no_text = "NO BADGE"
+        bbox = draw.textbbox((0, 0), no_text, font=no_font)
+        bx = badge_box[0] + max(0, ((badge_box[2] - badge_box[0]) - (bbox[2] - bbox[0])) // 2)
+        by = badge_box[1] + max(0, ((badge_box[3] - badge_box[1]) - (bbox[3] - bbox[1])) // 2)
+        draw.text((bx, by), no_text, font=no_font, fill=(220, 220, 220))
+
+    title_font = find_font(scale_value(layout["title_size"], scale, 18), bold=True)
+    subtitle_font = find_font(scale_value(layout["subtitle_size"], scale, 13))
+    small_font = find_font(scale_value(layout["small_size"], scale, 12))
+    label_font = find_font(scale_value(layout["label_size"], scale, 13), bold=True)
+    desc_font = find_font(scale_value(layout["desc_size"], scale, 14))
+    footer_font = find_font(scale_value(layout["footer_size"], scale, 11))
+
+    x = scale_value(layout["text_x"], scale, badge_box[2] + 12)
+    y = scale_value(layout["text_y"], scale, 20)
+    right_margin = scale_value(layout["text_right_margin"], scale, 20)
+    text_width = max(120, width - x - right_margin)
+    line_gap = scale_value(layout["line_gap"], scale, 3)
+
+    y = draw_wrapped(
+        draw,
+        achievement.get("Title", "Achievement"),
+        title_font,
+        x,
+        y,
+        text_width,
+        (245, 245, 245),
+        line_gap=line_gap,
+        max_lines=layout["title_lines"],
+    )
 
     status = achievement_status(achievement)
     points = achievement.get("Points", 0)
@@ -353,34 +528,61 @@ def render_card(game_id, achievement_id):
     if true_ratio:
         meta += f" - TrueRatio {true_ratio}"
     meta += f" - {ach_type}"
-    y += 8
-    y = draw_wrapped(draw, meta, subtitle_font, x, y, 820, (204, 210, 222), line_gap=6, max_lines=2)
-    y += 16
-    draw.line((x, y, 1180, y), fill=(75, 80, 92), width=2)
-    y += 24
+
+    y += scale_value(8, scale, 2)
+    y = draw_wrapped(
+        draw,
+        meta,
+        subtitle_font,
+        x,
+        y,
+        text_width,
+        (204, 210, 222),
+        line_gap=max(2, line_gap - 1),
+        max_lines=layout["meta_lines"],
+    )
+    y += scale_value(16, scale, 4)
+    divider_right = width - scale_value(layout["divider_right_margin"], scale, 24)
+    draw.line((x, y, divider_right, y), fill=(75, 80, 92), width=scale_value(2, scale, 1))
+    y += scale_value(24, scale, 6)
+
     draw.text((x, y), "Description", font=label_font, fill=(245, 245, 245))
-    y += 42
-    y = draw_wrapped(draw, achievement.get("Description", ""), desc_font, x, y, 790, (232, 232, 232), line_gap=7, max_lines=4)
-    y += 24
+    y += scale_value(42, scale, 14)
+    y = draw_wrapped(
+        draw,
+        achievement.get("Description", ""),
+        desc_font,
+        x,
+        y,
+        text_width,
+        (232, 232, 232),
+        line_gap=max(2, line_gap - 1),
+        max_lines=layout["desc_lines"],
+    )
+    y += scale_value(24, scale, 6)
 
     earned_softcore, earned_hardcore = achievement_dates(achievement)
-    if earned_softcore:
+    date_step = scale_value(42, scale, 16)
+    if earned_softcore and y < height - scale_value(120, scale, 44):
         draw.text((x, y), f"Unlocked SC: {earned_softcore}", font=small_font, fill=(204, 210, 222))
-        y += 42
-    if earned_hardcore:
+        y += date_step
+    if earned_hardcore and y < height - scale_value(100, scale, 38):
         draw.text((x, y), f"Unlocked HC: {earned_hardcore}", font=small_font, fill=(204, 210, 222))
-        y += 42
+        y += date_step
 
     game_title = clean_text(game.get("Title", "Unknown Game"))
     console = clean_text(game.get("ConsoleName", ""))
-    y = draw_wrapped(draw, f"Game: {game_title}", small_font, x, y, 790, (204, 210, 222), line_gap=6, max_lines=1)
-    if console:
-        y += 2
+    if y < height - scale_value(82, scale, 36):
+        y = draw_wrapped(draw, f"Game: {game_title}", small_font, x, y, text_width, (204, 210, 222), line_gap=max(2, line_gap - 2), max_lines=1)
+    if console and y < height - scale_value(64, scale, 28):
+        y += scale_value(2, scale, 1)
         draw.text((x, y), f"System: {console}", font=small_font, fill=(204, 210, 222))
 
     footer = "Press A / Enter to return"
     bbox = draw.textbbox((0, 0), footer, font=footer_font)
-    draw.text(((width - (bbox[2] - bbox[0])) // 2, 635), footer, font=footer_font, fill=(180, 186, 198))
+    footer_y = min(height - scale_value(38, scale, 16), scale_value(layout["footer_y"], scale, height - 40))
+    draw.text(((width - (bbox[2] - bbox[0])) // 2, footer_y), footer, font=footer_font, fill=(180, 186, 198))
+
     img.save(card_file, "PNG")
     return str(card_file)
 
@@ -547,6 +749,7 @@ def settings_menu(stdscr):
     while True:
         choice = list_menu(stdscr, "Settings / Info", [
             ("info", "Show config file location"),
+            ("display", "Show detected display/card size"),
             ("test", "Test API connection"),
             ("clear", "Clear cache"),
             ("back", "Back"),
@@ -555,6 +758,17 @@ def settings_menu(stdscr):
             return
         if choice == "info":
             wait_message(stdscr, "Config Info", ["Config file:", str(CONFIG), "", "Use MiSTer Companion or edit this file manually:", "", "[retroachievements]", "username=YourUsername", "api_key=YourWebApiKey"])
+        elif choice == "display":
+            fb_width, fb_height = detect_framebuffer_size()
+            layout = build_card_layout()
+            wait_message(stdscr, "Detected Display", [
+                f"Framebuffer: {fb_width or 'unknown'}x{fb_height or 'unknown'}",
+                f"Card layout: {layout.get('name')}",
+                f"Card size: {layout.get('width')}x{layout.get('height')}",
+                f"Scale: {layout.get('scale'):.2f}",
+                "",
+                "The card renderer chooses this automatically.",
+            ])
         elif choice == "test":
             loading(stdscr, "Testing RetroAchievements API")
             try:
