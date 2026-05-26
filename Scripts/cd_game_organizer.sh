@@ -580,6 +580,16 @@ process_group_files() {
     done
 }
 
+folder_has_child_dirs() {
+    CHECK_DIR="$1"
+
+    for CHILD in "$CHECK_DIR"/*; do
+        [ -d "$CHILD" ] && return 0
+    done
+
+    return 1
+}
+
 process_directory() {
     SYSTEM="$1"
     SYSTEM_ROOT="$2"
@@ -724,6 +734,30 @@ process_directory() {
         return
     fi
 
+    if [ "$GROUP_COUNT" -eq 1 ] && ! folder_has_child_dirs "$DIR"; then
+        ONLY_MAIN_FILE=""
+
+        for GROUP in "$WORK_DIR"/group_*.txt; do
+            [ -f "$GROUP" ] || continue
+
+            if [ -f "$GROUP.main" ]; then
+                ONLY_MAIN_FILE=$(cat "$GROUP.main" 2>/dev/null)
+            fi
+
+            break
+        done
+
+        if [ -n "$ONLY_MAIN_FILE" ] && ! is_internal_file_name "$ONLY_MAIN_FILE"; then
+            ONLY_GAME_NAME=$(safe_name "$(normalize_game_name "$(strip_ext "$ONLY_MAIN_FILE")")")
+            CURRENT_FOLDER=$(basename "$DIR")
+
+            if [ "$CURRENT_FOLDER" = "$ONLY_GAME_NAME" ]; then
+                rm -rf "$WORK_DIR"
+                return
+            fi
+        fi
+    fi
+
     log_line "PROCESS FOLDER: $DIR"
     log_line "Reason: found $GROUP_COUNT game groups"
 
@@ -747,10 +781,19 @@ walk_directory_recursive() {
             ;;
     esac
 
-    process_directory "$SYSTEM" "$SYSTEM_ROOT" "$DIR"
+    log_line "SCAN FOLDER: $DIR"
+
+    CHILD_LIST="$RUN_WORK_DIR/children_$(sanitize_id "$DIR").tmp"
+    : > "$CHILD_LIST"
 
     for CHILD in "$DIR"/*; do
         [ -d "$CHILD" ] || continue
+
+        if [ -L "$CHILD" ]; then
+            log_line "SKIP FOLDER: $CHILD"
+            log_line "Reason: folder is a symlink"
+            continue
+        fi
 
         case "$CHILD" in
             "$CONFIG_DIR"*|/tmp/cd_game_organizer_*)
@@ -758,8 +801,17 @@ walk_directory_recursive() {
                 ;;
         esac
 
-        walk_directory_recursive "$SYSTEM" "$SYSTEM_ROOT" "$CHILD"
+        printf '%s\n' "$CHILD" >> "$CHILD_LIST"
     done
+
+    process_directory "$SYSTEM" "$SYSTEM_ROOT" "$DIR"
+
+    while IFS= read -r CHILD || [ -n "$CHILD" ]; do
+        [ -d "$CHILD" ] || continue
+        walk_directory_recursive "$SYSTEM" "$SYSTEM_ROOT" "$CHILD"
+    done < "$CHILD_LIST"
+
+    rm -f "$CHILD_LIST"
 }
 
 walk_system_folder() {
