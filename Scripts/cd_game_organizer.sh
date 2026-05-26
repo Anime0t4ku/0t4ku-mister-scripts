@@ -5,7 +5,7 @@ APP_TITLE="MiSTer CD Game Organizer by Anime0t4ku"
 CONFIG_DIR="/media/fat/Scripts/.config/cd_game_organizer"
 LOG_FILE="$CONFIG_DIR/organizer.log"
 
-ROOTS="/media/fat/games /media/fat/cifs/games"
+ROOTS="/media/fat/cifs/games /media/fat/games"
 SUPPORTED_SYSTEMS="3DO CD-i MegaCD NeoGeo-CD PSX Saturn TGFX16-CD"
 ALL_SYSTEMS_CSV="3DO,CD-i,MegaCD,NeoGeo-CD,PSX,Saturn,TGFX16-CD"
 
@@ -724,14 +724,6 @@ process_directory() {
         return
     fi
 
-    if [ "$GROUP_COUNT" -eq 1 ]; then
-        log_line "SKIP FOLDER: $DIR"
-        log_line "Reason: folder contains only one game group and appears already organized"
-        SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
-        rm -rf "$WORK_DIR"
-        return
-    fi
-
     log_line "PROCESS FOLDER: $DIR"
     log_line "Reason: found $GROUP_COUNT game groups"
 
@@ -742,6 +734,34 @@ process_directory() {
     rm -rf "$WORK_DIR"
 }
 
+walk_directory_recursive() {
+    SYSTEM="$1"
+    SYSTEM_ROOT="$2"
+    DIR="$3"
+
+    [ -d "$DIR" ] || return
+
+    case "$DIR" in
+        "$CONFIG_DIR"*|/tmp/cd_game_organizer_*)
+            return
+            ;;
+    esac
+
+    process_directory "$SYSTEM" "$SYSTEM_ROOT" "$DIR"
+
+    for CHILD in "$DIR"/*; do
+        [ -d "$CHILD" ] || continue
+
+        case "$CHILD" in
+            "$CONFIG_DIR"*|/tmp/cd_game_organizer_*)
+                continue
+                ;;
+        esac
+
+        walk_directory_recursive "$SYSTEM" "$SYSTEM_ROOT" "$CHILD"
+    done
+}
+
 walk_system_folder() {
     SYSTEM="$1"
     SYSTEM_DIR="$2"
@@ -750,14 +770,7 @@ walk_system_folder() {
 
     log_line "SCANNING SYSTEM FOLDER: $SYSTEM_DIR"
 
-    DIR_LIST="$RUN_WORK_DIR/dirs_$(sanitize_id "$SYSTEM_DIR").tmp"
-    find "$SYSTEM_DIR" -type d > "$DIR_LIST"
-
-    while IFS= read -r DIR || [ -n "$DIR" ]; do
-        process_directory "$SYSTEM" "$SYSTEM_DIR" "$DIR"
-    done < "$DIR_LIST"
-
-    rm -f "$DIR_LIST"
+    walk_directory_recursive "$SYSTEM" "$SYSTEM_DIR" "$SYSTEM_DIR"
 }
 
 write_restore_manifest() {
@@ -815,7 +828,7 @@ organize_games() {
     log_line "$APP_TITLE"
     log_line "Action: organize"
     log_line "Started: $START_TIME"
-    log_line "Roots: $ROOTS"
+    log_line "Root priority: $ROOTS"
 
     if [ -n "$SYSTEM_FILTER" ]; then
         log_line "Selected systems: $SYSTEM_FILTER"
@@ -823,7 +836,23 @@ organize_games() {
         log_line "Selected systems: all supported systems"
     fi
 
-    for ROOT in $ROOTS; do
+    CIFS_ROOT="/media/fat/cifs/games"
+    LOCAL_ROOT="/media/fat/games"
+
+    if [ -d "$CIFS_ROOT" ] && [ -n "$(find "$CIFS_ROOT" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+        SCAN_ROOTS="$CIFS_ROOT"
+        log_line "Using CIFS games root: $CIFS_ROOT"
+    else
+        SCAN_ROOTS="$LOCAL_ROOT"
+
+        if [ ! -d "$CIFS_ROOT" ]; then
+            log_line "CIFS games root not found, falling back to local games root: $LOCAL_ROOT"
+        else
+            log_line "CIFS games root is empty, falling back to local games root: $LOCAL_ROOT"
+        fi
+    fi
+
+    for ROOT in $SCAN_ROOTS; do
         if [ ! -d "$ROOT" ]; then
             log_line "SKIP ROOT: $ROOT"
             log_line "Reason: folder does not exist or is not mounted"
