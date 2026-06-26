@@ -2,6 +2,7 @@
 
 APP_NAME="cd_game_organizer"
 APP_TITLE="MiSTer CD Game Organizer by Anime0t4ku"
+VERSION="v1.1.0"
 CONFIG_DIR="/media/fat/Scripts/.config/cd_game_organizer"
 LOG_FILE="$CONFIG_DIR/organizer.log"
 

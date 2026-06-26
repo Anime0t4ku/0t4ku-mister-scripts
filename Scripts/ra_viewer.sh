@@ -1,6 +1,7 @@
 #!/bin/sh
 
 TITLE="RetroAchievements Viewer for MiSTer by Anime0t4ku"
+VERSION="v1.1.0"
 
 BASE="/media/fat/Scripts/.config/ra_viewer"
 HELPER="$BASE/ra_viewer.py"

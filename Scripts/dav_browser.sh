@@ -1,4 +1,5 @@
 #!/bin/sh
+VERSION="v1.1.0"
 
 BASE_DIR="/media/fat/Scripts/.config/dav_browser"
 CONFIG_FILE="$BASE_DIR/dav_browser.ini"

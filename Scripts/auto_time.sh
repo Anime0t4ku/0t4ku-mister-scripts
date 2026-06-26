@@ -2,6 +2,7 @@
 
 TZ_NAME=""
 TITLE="auto_time by Anime0t4ku"
+VERSION="v1.1.0"
 
 d() {
     dialog --clear --title "$TITLE" "$@"

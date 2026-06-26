@@ -2,6 +2,7 @@
 
 APP_NAME="static_wallpaper"
 APP_TITLE="static_wallpaper by Anime0t4ku"
+VERSION="v1.1.0"
 
 BASE_DIR="/media/fat/Scripts/.config/$APP_NAME"
 CONFIG_FILE="$BASE_DIR/selected_wallpaper.txt"
