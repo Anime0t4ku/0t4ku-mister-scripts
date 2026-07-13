@@ -2,17 +2,18 @@
 
 APP_NAME="cd_game_organizer"
 APP_TITLE="MiSTer CD Game Organizer by Anime0t4ku"
-VERSION="v1.1.0"
+VERSION="v1.2.0"
 CONFIG_DIR="/media/fat/Scripts/.config/cd_game_organizer"
 LOG_FILE="$CONFIG_DIR/organizer.log"
 
-ROOTS="/media/fat/cifs/games /media/fat/games"
+ROOTS="/media/fat/games /media/fat/cifs/games /media/usb0/games"
 SUPPORTED_SYSTEMS="3DO CD-i MegaCD NeoGeo-CD PSX Saturn TGFX16-CD"
 ALL_SYSTEMS_CSV="3DO,CD-i,MegaCD,NeoGeo-CD,PSX,Saturn,TGFX16-CD"
 
 MODE="interactive"
 ACTION=""
 SYSTEM_FILTER=""
+ROOT_CHOICE=""
 
 MOVED_COUNT=0
 CREATED_COUNT=0
@@ -881,7 +882,7 @@ organize_games() {
     log_line "$APP_TITLE"
     log_line "Action: organize"
     log_line "Started: $START_TIME"
-    log_line "Root priority: $ROOTS"
+    log_line "Available games roots: $ROOTS"
 
     if [ -n "$SYSTEM_FILTER" ]; then
         log_line "Selected systems: $SYSTEM_FILTER"
@@ -889,21 +890,31 @@ organize_games() {
         log_line "Selected systems: all supported systems"
     fi
 
-    CIFS_ROOT="/media/fat/cifs/games"
     LOCAL_ROOT="/media/fat/games"
+    CIFS_ROOT="/media/fat/cifs/games"
+    USB0_ROOT="/media/usb0/games"
 
-    if [ -d "$CIFS_ROOT" ] && [ -n "$(find "$CIFS_ROOT" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
-        SCAN_ROOTS="$CIFS_ROOT"
-        log_line "Using CIFS games root: $CIFS_ROOT"
-    else
-        SCAN_ROOTS="$LOCAL_ROOT"
+    case "$ROOT_CHOICE" in
+        local|"")
+            SCAN_ROOTS="$LOCAL_ROOT"
+            ROOT_CHOICE="local"
+            ;;
+        cifs)
+            SCAN_ROOTS="$CIFS_ROOT"
+            ;;
+        usb0)
+            SCAN_ROOTS="$USB0_ROOT"
+            ;;
+        *)
+            log_line "ERROR: Unknown root selection: $ROOT_CHOICE"
+            ERROR_COUNT=$((ERROR_COUNT + 1))
+            write_restore_manifest "$START_TIME"
+            rm -rf "$RUN_WORK_DIR"
+            return 1
+            ;;
+    esac
 
-        if [ ! -d "$CIFS_ROOT" ]; then
-            log_line "CIFS games root not found, falling back to local games root: $LOCAL_ROOT"
-        else
-            log_line "CIFS games root is empty, falling back to local games root: $LOCAL_ROOT"
-        fi
-    fi
+    log_line "Selected games root: $SCAN_ROOTS"
 
     for ROOT in $SCAN_ROOTS; do
         if [ ! -d "$ROOT" ]; then
@@ -1089,6 +1100,25 @@ show_msg() {
     redraw_screen
 }
 
+show_root_select_menu() {
+    CHOICE=$(dialog --clear \
+        --title "$APP_TITLE" \
+        --menu "Choose where your games are stored:" 12 68 4 \
+        local "Local - /media/fat/games" \
+        cifs "CIFS - /media/fat/cifs/games" \
+        usb0 "USB0 - /media/usb0/games" \
+        cancel "Cancel" \
+        3>&1 1>&2 2>&3)
+    STATUS=$?
+    redraw_screen
+
+    [ "$STATUS" -ne 0 ] && return 1
+    [ "$CHOICE" = "cancel" ] && return 1
+
+    ROOT_CHOICE="$CHOICE"
+    return 0
+}
+
 show_system_select_menu() {
     SELECTED="$ALL_SYSTEMS_CSV"
 
@@ -1167,7 +1197,7 @@ show_main_menu() {
 
         case "$CHOICE" in
             1)
-                if show_system_select_menu; then
+                if show_root_select_menu && show_system_select_menu; then
                     organize_games "$SYSTEM_FILTER"
                     show_msg "Organization finished.
 
@@ -1204,22 +1234,26 @@ $APP_TITLE
 
 Usage:
   $0
-  $0 --organize --unattended
-  $0 --organize --unattended --systems PSX,Saturn,MegaCD
+  $0 --organize --unattended --root local
+  $0 --organize --unattended --root cifs --systems PSX,Saturn,MegaCD
+  $0 --organize --unattended --root usb0
   $0 --restore-last --unattended
 
 Options:
   --organize          Organize loose CD games into per-game folders.
   --restore-last      Restore the most recent organization run.
   --unattended        Run without dialog menus.
+  --root LOCATION     Games location: local, cifs, or usb0. Default: local.
   --systems LIST      Comma-separated system list, for example PSX,Saturn.
   --help              Show this help.
 
 Supported systems:
   $SUPPORTED_SYSTEMS
 
-Scan roots:
-  $ROOTS
+Game locations:
+  local  /media/fat/games
+  cifs   /media/fat/cifs/games
+  usb0   /media/usb0/games
 
 Config and logs:
   $CONFIG_DIR
@@ -1236,6 +1270,10 @@ while [ $# -gt 0 ]; do
             ;;
         --unattended)
             MODE="unattended"
+            ;;
+        --root)
+            shift
+            ROOT_CHOICE="$1"
             ;;
         --systems)
             shift
@@ -1254,6 +1292,16 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+case "$ROOT_CHOICE" in
+    ""|local|cifs|usb0)
+        ;;
+    *)
+        echo "Unknown root: $ROOT_CHOICE"
+        echo "Valid roots: local, cifs, usb0"
+        exit 1
+        ;;
+esac
 
 if [ "$MODE" = "unattended" ]; then
     case "$ACTION" in
