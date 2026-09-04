@@ -2,11 +2,11 @@
 
 APP_NAME="cd_game_organizer"
 APP_TITLE="MiSTer CD Game Organizer by Anime0t4ku"
-VERSION="v1.2.0"
+VERSION="v1.3.0"
 CONFIG_DIR="/media/fat/Scripts/.config/cd_game_organizer"
 LOG_FILE="$CONFIG_DIR/organizer.log"
 
-ROOTS="/media/fat/games /media/fat/cifs/games /media/usb0/games"
+ROOTS="/media/fat/games /media/fat/cifs/games"
 SUPPORTED_SYSTEMS="3DO CD-i MegaCD NeoGeo-CD PSX Saturn TGFX16-CD"
 ALL_SYSTEMS_CSV="3DO,CD-i,MegaCD,NeoGeo-CD,PSX,Saturn,TGFX16-CD"
 
@@ -63,6 +63,36 @@ escape_json() {
 
 reverse_file() {
     awk '{ lines[NR]=$0 } END { for (i=NR; i>=1; i--) print lines[i] }' "$1"
+}
+
+mounted_usb_game_roots() {
+    awk '$2 ~ /^\/media\/usb[0-9]+$/ {
+        usb_number=$2
+        sub(/^\/media\/usb/, "", usb_number)
+        printf "%d\t%s/games\n", usb_number, $2
+    }' /proc/mounts 2>/dev/null | sort -n | while IFS="$(printf '\t')" read -r INDEX GAME_ROOT; do
+        [ -d "$GAME_ROOT" ] && printf '%s\n' "$GAME_ROOT"
+    done
+}
+
+refresh_available_roots() {
+    ROOTS="/media/fat/games /media/fat/cifs/games"
+    for USB_GAME_ROOT in $(mounted_usb_game_roots); do
+        ROOTS="$ROOTS $USB_GAME_ROOT"
+    done
+}
+
+is_valid_usb_choice() {
+    case "$1" in
+        usb[0-9]*)
+            USB_INDEX=${1#usb}
+            case "$USB_INDEX" in
+                ""|*[!0-9]*) return 1 ;;
+            esac
+            return 0
+            ;;
+    esac
+    return 1
 }
 
 normalize_game_name() {
@@ -878,6 +908,8 @@ organize_games() {
 
     SYSTEM_FILTER="$SELECTED_SYSTEMS"
 
+    refresh_available_roots
+
     log_line "============================================================"
     log_line "$APP_TITLE"
     log_line "Action: organize"
@@ -892,7 +924,6 @@ organize_games() {
 
     LOCAL_ROOT="/media/fat/games"
     CIFS_ROOT="/media/fat/cifs/games"
-    USB0_ROOT="/media/usb0/games"
 
     case "$ROOT_CHOICE" in
         local|"")
@@ -902,15 +933,17 @@ organize_games() {
         cifs)
             SCAN_ROOTS="$CIFS_ROOT"
             ;;
-        usb0)
-            SCAN_ROOTS="$USB0_ROOT"
-            ;;
         *)
-            log_line "ERROR: Unknown root selection: $ROOT_CHOICE"
-            ERROR_COUNT=$((ERROR_COUNT + 1))
-            write_restore_manifest "$START_TIME"
-            rm -rf "$RUN_WORK_DIR"
-            return 1
+            if is_valid_usb_choice "$ROOT_CHOICE"; then
+                USB_INDEX=${ROOT_CHOICE#usb}
+                SCAN_ROOTS="/media/usb$USB_INDEX/games"
+            else
+                log_line "ERROR: Unknown root selection: $ROOT_CHOICE"
+                ERROR_COUNT=$((ERROR_COUNT + 1))
+                write_restore_manifest "$START_TIME"
+                rm -rf "$RUN_WORK_DIR"
+                return 1
+            fi
             ;;
     esac
 
@@ -1101,13 +1134,27 @@ show_msg() {
 }
 
 show_root_select_menu() {
+    set -- \
+        local "Local - /media/fat/games" \
+        cifs "CIFS - /media/fat/cifs/games"
+
+    USB_COUNT=0
+    for USB_GAME_ROOT in $(mounted_usb_game_roots); do
+        USB_MOUNT=${USB_GAME_ROOT%/games}
+        USB_INDEX=${USB_MOUNT#/media/usb}
+        set -- "$@" "usb$USB_INDEX" "USB$USB_INDEX - $USB_GAME_ROOT"
+        USB_COUNT=$((USB_COUNT + 1))
+    done
+
+    set -- "$@" cancel "Cancel"
+    MENU_ITEMS=$((USB_COUNT + 3))
+    MENU_HEIGHT=$MENU_ITEMS
+    [ "$MENU_HEIGHT" -gt 10 ] && MENU_HEIGHT=10
+
     CHOICE=$(dialog --clear \
         --title "$APP_TITLE" \
-        --menu "Choose where your games are stored:" 12 68 4 \
-        local "Local - /media/fat/games" \
-        cifs "CIFS - /media/fat/cifs/games" \
-        usb0 "USB0 - /media/usb0/games" \
-        cancel "Cancel" \
+        --menu "Choose where your games are stored:" 14 72 "$MENU_HEIGHT" \
+        "$@" \
         3>&1 1>&2 2>&3)
     STATUS=$?
     redraw_screen
@@ -1236,14 +1283,14 @@ Usage:
   $0
   $0 --organize --unattended --root local
   $0 --organize --unattended --root cifs --systems PSX,Saturn,MegaCD
-  $0 --organize --unattended --root usb0
+  $0 --organize --unattended --root usb1
   $0 --restore-last --unattended
 
 Options:
   --organize          Organize loose CD games into per-game folders.
   --restore-last      Restore the most recent organization run.
   --unattended        Run without dialog menus.
-  --root LOCATION     Games location: local, cifs, or usb0. Default: local.
+  --root LOCATION     Games location: local, cifs, or any usbN mount. Default: local.
   --systems LIST      Comma-separated system list, for example PSX,Saturn.
   --help              Show this help.
 
@@ -1253,7 +1300,7 @@ Supported systems:
 Game locations:
   local  /media/fat/games
   cifs   /media/fat/cifs/games
-  usb0   /media/usb0/games
+  usbN   /media/usbN/games (for example usb0, usb1, or usb2)
 
 Config and logs:
   $CONFIG_DIR
@@ -1294,12 +1341,13 @@ while [ $# -gt 0 ]; do
 done
 
 case "$ROOT_CHOICE" in
-    ""|local|cifs|usb0)
-        ;;
+    ""|local|cifs) ;;
     *)
-        echo "Unknown root: $ROOT_CHOICE"
-        echo "Valid roots: local, cifs, usb0"
-        exit 1
+        if ! is_valid_usb_choice "$ROOT_CHOICE"; then
+            echo "Unknown root: $ROOT_CHOICE"
+            echo "Valid roots: local, cifs, or usbN (for example usb0 or usb1)"
+            exit 1
+        fi
         ;;
 esac
 
